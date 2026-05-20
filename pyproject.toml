@@ -1,0 +1,28 @@
+[project]
+name = "bastion"
+version = "0.1.0"
+description = "Official Transformers reproduction code for BASTION budget-aware speculative decoding"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "rich",
+    "loguru",
+    "numpy",
+    "scipy",
+    "tqdm",
+    "datasets",
+    "requests",
+    "huggingface-hub",
+]
+
+[tool.setuptools.packages.find]
+include = ["bastion*", "dflash*"]
+
+[project.optional-dependencies]
+transformers = [
+    "torch",
+    "transformers==4.57.1",
+    "accelerate",
+    "typing-extensions",
+]
