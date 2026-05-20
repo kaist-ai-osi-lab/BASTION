@@ -1,12 +1,15 @@
 [project]
-name = "dflash"
+name = "bastion"
 version = "0.1.0"
-description = "DFlash: Block Diffusion for Flash Speculative Decoding"
+description = "Official Transformers reproduction code for BASTION budget-aware speculative decoding"
+readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "MIT" }
 dependencies = [
     "rich",
     "loguru",
     "numpy",
+    "scipy",
     "tqdm",
     "datasets",
     "requests",
@@ -14,7 +17,7 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["dflash*"]
+include = ["bastion*", "dflash*"]
 
 [project.optional-dependencies]
 transformers = [
@@ -22,17 +25,4 @@ transformers = [
     "transformers==4.57.1",
     "accelerate",
     "typing-extensions",
-]
-sglang = [
-    "sglang[all] @ git+https://github.com/sgl-project/sglang.git@refs/pull/23000/head#subdirectory=python",
-    "transformers",
-]
-vllm = [
-    "vllm",
-    "datasets>=3,<4",
-    "huggingface-hub<1",
-]
-mlx = [
-    "mlx==0.31.2",
-    "mlx-lm==0.31.3",
 ]
