@@ -16,7 +16,7 @@ Official code release for **BASTION: Budget-Aware Speculative Decoding with Tree
   <img src="assets/main_results_speedup_comparison.png" alt="BASTION speedup vs. EAGLE-3 and DFlash across benchmarks" width="780"/>
 </p>
 
-BASTION accelerates block-diffusion speculative decoding by building a query-dependent verification tree from the drafter's position-wise logits. The public release focuses on the paper's **Transformers backend** reproduction path: DFlash block-diffusion drafters, BASTION adaptive tree construction, hardware-calibrated verification latency modeling, and benchmark scripts.
+BASTION couples adaptive tree construction with a hardware-calibrated verification latency model to choose the verification budget on the fly — no per-workload, per-GPU, or per-model tuning.
 
 ## Scope
 
@@ -133,7 +133,6 @@ Behavior across ranks: prompts are sharded round-robin by rank. Rank 0 creates t
 ```
 bastion/    # adaptive tree drafting, cost model, benchmark harness
 dflash/     # vendored DFlash drafter implementation
-cache/      # auto-created: dataset JSONLs + per-(GPU, model) calibration
 ```
 
 Key files:
