@@ -84,18 +84,6 @@ The script compares three modes in one run:
 - DFlash single-path speculative decoding
 - BASTION adaptive tree-drafting
 
-Expected output at the end of a successful run (sample from A100, Qwen3-8B on GSM8K; numbers will vary by GPU and dataset):
-
-```
-===============================================================
-Method                        Throughput   Speedup   Avg accept
----------------------------------------------------------------
-AR baseline (bs=1)           33.39 tok/s     1.00x            -
-DFlash (bs=16)              161.55 tok/s     4.84x         6.28
-BASTION tree-draft          208.27 tok/s     6.24x         8.80
-===============================================================
-```
-
 > **First-run note:** The first invocation for each `(GPU, target model)` pair runs a one-time calibration probe (a few minutes) before benchmarking, and writes three files under `cache/`:
 > `calib_probe_<gpu>_<model>.sigma_sequence_v1.jsonl`, `calibration_<gpu>_<model>.json`, `calibration_<gpu>_<model>.profile.json`.
 > Subsequent runs reuse them. Delete the corresponding files to recalibrate after changing hardware, CUDA kernels, model dtype, or attention backend.
