@@ -1,6 +1,16 @@
 # BASTION: Budget-Aware Speculative Decoding with Tree-structured Block Diffusion Drafting
 
-Official code release for reproducing the experiments in **BASTION: Budget-Aware Speculative Decoding with Tree-structured Block Diffusion Drafting**.
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Paper](https://img.shields.io/badge/paper-arXiv-b31b1b)](https://arxiv.org/abs/TODO)
+
+Official code release for **BASTION: Budget-Aware Speculative Decoding with Tree-structured Block Diffusion Drafting**.
+
+> **Up to 6.61× speedup over autoregressive decoding** — 2.45× over EAGLE-3 and 1.39× over DFlash, averaged across eight math/code/chat benchmarks on Qwen3-8B at temperature 0 (A100).
+
+<p align="center">
+  <img src="assets/main_results_speedup_comparison.png" alt="BASTION speedup vs. EAGLE-3 and DFlash across benchmarks" width="780"/>
+</p>
 
 BASTION accelerates block-diffusion speculative decoding by building a query-dependent verification tree from the drafter's position-wise logits. The public release focuses on the paper's **Transformers backend** reproduction path: DFlash block-diffusion drafters, BASTION adaptive tree construction, hardware-calibrated verification latency modeling, and benchmark scripts.
 
@@ -16,11 +26,13 @@ This repository is intended for experiment reproduction, not as a general servin
 
 SGLang, vLLM, and MLX backends are not part of this BASTION release.
 
-Attention backend policy:
+## Requirements
 
-- If FlashAttention is installed, AR baseline and DFlash use `flash_attention_2`.
-- BASTION verification always uses `sdpa`, even when FlashAttention is installed, because FlashAttention does not support the custom tree attention mask used by BASTION verification.
-- If FlashAttention is not installed, all three modes use `sdpa`.
+- **Python:** 3.10 or newer
+- **GPU:** NVIDIA GPU with CUDA support (bf16). Tested on A100 (80 GB), H100 (80 GB), A6000 (48 GB), and RTX PRO 6000 Blackwell (96 GB).
+- **VRAM:** ~20 GB for Qwen3-4B targets, ~24 GB for Qwen3-8B / Llama-3.1-8B targets in bf16.
+- **PyTorch / Transformers:** `transformers==4.57.1` and a matching `torch` build (installed via the `[transformers]` extra).
+- **Optional:** FlashAttention (`flash-attn`) for faster AR and DFlash baselines.
 
 ## Installation
 
@@ -38,17 +50,19 @@ For faster AR and DFlash baselines, install FlashAttention separately if it is c
 uv pip install flash-attn --no-build-isolation
 ```
 
-BASTION's target verification path still uses SDPA after FlashAttention is installed. This is intentional: FlashAttention can trigger CUDA errors with BASTION's custom tree mask.
+### Attention backends
+
+- If FlashAttention is installed, AR baseline and DFlash use `flash_attention_2`.
+- BASTION verification always uses `sdpa`, even when FlashAttention is installed — FlashAttention does not support the custom tree attention mask.
+- If FlashAttention is not installed, all three modes use `sdpa`.
 
 ## Supported Models
 
 | Target model | DFlash draft model | Notes |
 |---|---|---|
-| `Qwen/Qwen3-4B` | `z-lab/Qwen3-4B-DFlash-b16` | use `enable_thinking=False` |
-| `Qwen/Qwen3-8B` | `z-lab/Qwen3-8B-DFlash-b16` | use `enable_thinking=False` |
-| `meta-llama/Llama-3.1-8B-Instruct` | `z-lab/LLaMA3.1-8B-Instruct-DFlash-UltraChat` | may require Hugging Face access |
-
-Qwen3 DFlash draft models were trained for non-thinking generation. Do not pass `--enable-thinking` for Qwen3-4B or Qwen3-8B.
+| `Qwen/Qwen3-4B` | `z-lab/Qwen3-4B-DFlash-b16` | non-thinking only — do not pass `--enable-thinking` |
+| `Qwen/Qwen3-8B` | `z-lab/Qwen3-8B-DFlash-b16` | non-thinking only — do not pass `--enable-thinking` |
+| `meta-llama/Llama-3.1-8B-Instruct` | `z-lab/LLaMA3.1-8B-Instruct-DFlash-UltraChat` | gated — accept the license and run `huggingface-cli login` |
 
 ## Quick Start
 
@@ -70,38 +84,31 @@ The script compares three modes in one run:
 - DFlash single-path speculative decoding
 - BASTION adaptive tree-drafting
 
-The first run for each `(GPU, target model)` pair creates calibration/profile files under `cache/`:
+Expected output at the end of a successful run (sample from A100, Qwen3-8B on GSM8K; numbers will vary by GPU and dataset):
 
-- `calib_probe_<gpu>_<model>.sigma_sequence_v1.jsonl`
-- `calibration_<gpu>_<model>.json`
-- `calibration_<gpu>_<model>.profile.json`
+```
+===============================================================
+Method                        Throughput   Speedup   Avg accept
+---------------------------------------------------------------
+AR baseline (bs=1)           33.39 tok/s     1.00x            -
+DFlash (bs=16)              161.55 tok/s     4.84x         6.28
+BASTION tree-draft          208.27 tok/s     6.24x         8.80
+===============================================================
+```
 
-These caches are reused by later runs. Delete the corresponding files if you want to recalibrate after changing hardware, CUDA kernels, model dtype, or attention backend.
+> **First-run note:** The first invocation for each `(GPU, target model)` pair runs a one-time calibration probe (a few minutes) before benchmarking, and writes three files under `cache/`:
+> `calib_probe_<gpu>_<model>.sigma_sequence_v1.jsonl`, `calibration_<gpu>_<model>.json`, `calibration_<gpu>_<model>.profile.json`.
+> Subsequent runs reuse them. Delete the corresponding files to recalibrate after changing hardware, CUDA kernels, model dtype, or attention backend.
 
 ## Reproducing Paper Benchmarks
 
-The benchmark loader supports the short-context datasets used in the paper:
+Supported `--dataset` values:
 
-- `gsm8k`
-- `math500`
-- `aime25` or `aime2025`
-- `humaneval` or `human_eval`
-- `mbpp`
-- `lcb` or `livecodebench`
-- `mt-bench`
-- `alpaca`
+- **Short-context:** `gsm8k`, `math500`, `aime25`, `humaneval`, `mbpp`, `lcb`, `mt-bench`, `alpaca`
+- **LongBench (English):** `qasper`, `multifieldqa_en`, `gov_report`, `multi_news`, `triviaqa`, `samsum`, `passage_retrieval_en` (also accepted with a `longbench-` prefix)
+- **Group aliases:** `paper-short` (all eight short-context benchmarks in one run) and `longbench` (all seven LongBench subsets in one run). Useful for a single combined number; use the per-dataset loop below to reproduce the paper's per-dataset table.
 
-It also supports the LongBench English subsets:
-
-- `longbench-qasper` or `qasper`
-- `longbench-multifieldqa_en` or `multifieldqa_en`
-- `longbench-gov_report` or `gov_report`
-- `longbench-multi_news` or `multi_news`
-- `longbench-triviaqa` or `triviaqa`
-- `longbench-samsum` or `samsum`
-- `longbench-passage_retrieval_en` or `passage_retrieval_en`
-
-For convenience, `paper-short` concatenates the eight short-context benchmarks, and `longbench` concatenates the seven LongBench subsets. For per-dataset reporting, run each dataset separately:
+For per-dataset reporting, loop over dataset names (swap the list for the LongBench subsets to reproduce the long-context table):
 
 ```bash
 for dataset in gsm8k math500 aime25 humaneval mbpp lcb mt-bench alpaca; do
@@ -110,28 +117,13 @@ for dataset in gsm8k math500 aime25 humaneval mbpp lcb mt-bench alpaca; do
     --draft-model z-lab/Qwen3-8B-DFlash-b16 \
     --dataset "$dataset" \
     --max-new-tokens 2048 \
-    --temperature 0.0
+    --temperature 0.0   # set to 1.0 for stochastic decoding
 done
 ```
-
-LongBench reproduction:
-
-```bash
-for dataset in qasper multifieldqa_en gov_report multi_news triviaqa samsum passage_retrieval_en; do
-  python -m bastion.benchmark \
-    --model Qwen/Qwen3-8B \
-    --draft-model z-lab/Qwen3-8B-DFlash-b16 \
-    --dataset "$dataset" \
-    --max-new-tokens 2048 \
-    --temperature 0.0
-done
-```
-
-For stochastic decoding experiments, set `--temperature 1.0`.
 
 ## Multi-GPU Runs
 
-The paper reports single-GPU, batch-size-1 measurements. You can use `torchrun` to shard prompts across multiple GPUs for faster benchmark collection, but each rank still runs batch size 1 on its assigned GPU:
+The paper reports single-GPU, batch-size-1 measurements. `torchrun` can shard prompts across multiple GPUs to collect benchmarks faster, but each rank still runs batch size 1 on its assigned GPU:
 
 ```bash
 torchrun --nproc_per_node=8 -m bastion.benchmark \
@@ -142,27 +134,46 @@ torchrun --nproc_per_node=8 -m bastion.benchmark \
   --temperature 0.0
 ```
 
-## Implementation Map
+Behavior across ranks: prompts are sharded round-robin by rank. Rank 0 creates the calibration cache on first run; other ranks wait for it. Per-rank results are gathered to rank 0, which prints the combined summary table.
 
-- `bastion/tree_draft.py`: adaptive best-first tree construction and BASTION generation
-- `bastion/cost_model.py`: calibrated roofline verification-latency model
-- `bastion/benchmark.py`: AR vs DFlash vs BASTION reproduction harness
-- `dflash/model.py`: DFlash Transformers draft model implementation used by BASTION
+## Repository Layout
+
+```
+bastion/    # adaptive tree drafting, cost model, benchmark harness
+dflash/     # vendored DFlash drafter implementation
+cache/      # auto-created: dataset JSONLs + per-(GPU, model) calibration
+```
+
+Key files:
+
+- `bastion/tree_draft.py` — adaptive best-first tree construction and BASTION generation
+- `bastion/cost_model.py` — calibrated roofline verification-latency model
+- `bastion/benchmark.py` — AR vs DFlash vs BASTION reproduction harness
+- `dflash/model.py` — DFlash Transformers draft model used by BASTION
 
 ## Notes
 
 - Datasets are downloaded through Hugging Face `datasets` and cached as JSONL files in `cache/`.
 - Calibration is part of the official reproduction flow. BASTION does not use an uncalibrated fallback in this release.
-- Llama-3.1 may require accepting the model license and logging in with `huggingface-cli login`.
-- When FlashAttention is installed, the benchmark loads a separate SDPA target model for BASTION verification, so peak memory use is higher than an SDPA-only run.
 - Throughput numbers can vary with GPU SKU, CUDA version, attention implementation, and driver/runtime state.
 
 ## Citation
 
 ```bibtex
 @article{oh2026bastion,
-  title   = {{BASTION: Budget-Aware Speculative Decoding with Tree-structured Block Diffusion Drafting}},
-  author  = {Oh, Soowon and Cao, Nam and Kim, Yujin and Jung, Hojung and Ahmad, Huzama and Bae, Sangmin and Yun, Se-Young},
-  year    = {2026}
+  title         = {{BASTION: Budget-Aware Speculative Decoding with Tree-structured Block Diffusion Drafting}},
+  author        = {Oh, Soowon and Cao, Nam and Kim, Yujin and Jung, Hojung and Ahmad, Huzama and Bae, Sangmin and Yun, Se-Young},
+  year          = {2026},
+  eprint        = {TODO},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CL}
 }
 ```
+
+## Acknowledgements
+
+BASTION builds on [DFlash](https://github.com/z-lab/dflash) block-diffusion drafters (z-lab) and compares against EAGLE-3 (via the [AngelSlim](https://github.com/tencent/AngelSlim) implementation). See the paper for full references.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
