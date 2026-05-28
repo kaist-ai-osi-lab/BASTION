@@ -10,6 +10,8 @@
 
 Official code release for **BASTION: Budget-Aware Speculative Decoding with Tree-structured Block Diffusion Drafting**.
 
+<video src="https://github.com/user-attachments/assets/5cc57a5b-b032-4239-8178-60d31f126fb7"></video>
+
 > **Up to 6.61× speedup over autoregressive decoding** — 2.45× over EAGLE-3 and 1.39× over DFlash, averaged across eight math/code/chat benchmarks on Qwen3-8B at temperature 0 (A100).
 
 <p align="center">
