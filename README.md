@@ -6,7 +6,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
-[![Paper](https://img.shields.io/badge/paper-arXiv-b31b1b)](https://arxiv.org/abs/TODO)
+[![Paper](https://img.shields.io/badge/paper-arXiv-b31b1b)](https://arxiv.org/abs/2605.29727)
 
 Official code release for **BASTION: Budget-Aware Speculative Decoding with Tree-structured Block Diffusion Drafting**.
 
@@ -153,13 +153,14 @@ Key files:
 ## Citation
 
 ```bibtex
-@article{oh2026bastion,
-  title         = {{BASTION: Budget-Aware Speculative Decoding with Tree-structured Block Diffusion Drafting}},
-  author        = {Oh, Soowon and Cao, Nam and Kim, Yujin and Jung, Hojung and Ahmad, Huzama and Bae, Sangmin and Yun, Se-Young},
+@misc{oh2026bastionbudgetawarespeculativedecoding,
+  title         = {Bastion: Budget-Aware Speculative Decoding with Tree-structured Block Diffusion Drafting},
+  author        = {Soowon Oh and Nam Cao and Yujin Kim and Hojung Jung and Huzama Ahmad and Sangmin Bae and Se-Young Yun},
   year          = {2026},
-  eprint        = {TODO},
+  eprint        = {2605.29727},
   archivePrefix = {arXiv},
-  primaryClass  = {cs.CL}
+  primaryClass  = {cs.LG},
+  url           = {https://arxiv.org/abs/2605.29727}
 }
 ```
 
