@@ -411,6 +411,9 @@ def _select_best_tree_path(
     if verify_logits.shape[1] != tree.token_ids.shape[0]:
         raise ValueError("verify_logits length does not match tree size.")
 
+    if temperature >= 1e-5:
+        return _select_sampled_tree_path(tree, verify_logits, temperature)
+
     greedy_next = torch.argmax(verify_logits[0], dim=-1)
     num_paths, max_path_len = tree.retrieve_indices.shape
 
@@ -438,6 +441,61 @@ def _select_best_tree_path(
 
     return _TreeVerifyResult(
         accepted=best_accepted,
+        accepted_node_indices=accepted_node_indices,
+        accepted_token_ids=accepted_token_ids,
+        next_token_id=next_token,
+    )
+
+
+def _select_sampled_tree_path(
+    tree: TreeDraft,
+    verify_logits: torch.FloatTensor,
+    temperature: float,
+) -> _TreeVerifyResult:
+    """Traverse the realized target-sampled path and reuse its terminal sample.
+
+    Sampling is intentionally lazy: only logits on the selected path are
+    sampled.  Reusing the first sample without a matching child as
+    ``next_token_id`` is required to preserve the target distribution.
+    """
+    parent_indices = tree.parent_indices.detach().cpu().tolist()
+    token_ids = tree.token_ids.detach().cpu().tolist()
+    children_by_parent: dict[int, dict[int, int]] = {}
+    for node_idx in range(1, len(token_ids)):
+        parent_idx = int(parent_indices[node_idx])
+        token_id = int(token_ids[node_idx])
+        siblings = children_by_parent.setdefault(parent_idx, {})
+        if token_id in siblings:
+            raise ValueError(
+                "Lossless sampled tree verification requires unique sibling token IDs; "
+                f"parent {parent_idx} has duplicate token {token_id}."
+            )
+        siblings[token_id] = node_idx
+
+    accepted_indices = [0]
+    current_idx = 0
+    while True:
+        # Use the shared sampler without an FP32 cast so root, linear DFlash,
+        # and tree verification all use identical temperature/dtype semantics.
+        sampled_token = int(
+            _sample(verify_logits[:, current_idx : current_idx + 1], temperature)[0, 0].item()
+        )
+        next_idx = children_by_parent.get(current_idx, {}).get(sampled_token)
+        if next_idx is None:
+            next_token = sampled_token
+            break
+        accepted_indices.append(next_idx)
+        current_idx = next_idx
+
+    accepted_node_indices = torch.tensor(
+        accepted_indices,
+        dtype=torch.long,
+        device=tree.token_ids.device,
+    )
+    accepted_token_ids = tree.token_ids.index_select(0, accepted_node_indices)
+
+    return _TreeVerifyResult(
+        accepted=len(accepted_indices) - 1,
         accepted_node_indices=accepted_node_indices,
         accepted_token_ids=accepted_token_ids,
         next_token_id=next_token,
