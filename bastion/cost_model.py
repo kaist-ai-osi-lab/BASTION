@@ -47,6 +47,21 @@ MODEL_SPECS = {
             "V": 151936,
         },
     },
+    "qwen3-coder-30b-a3b-instruct": {
+        "display_name": "Qwen3-Coder-30B-A3B-Instruct",
+        "hf_model_name": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+        "args": {
+            "L": 48,
+            "h": 2048,
+            "n_q": 32,
+            "n_kv": 4,
+            "d": 128,
+            "h_ffn": 768,  # moe_intermediate_size
+            "E": 128,
+            "K": 8,
+            "V": 151936,
+        },
+    },
     "llama3.1-8b-instruct": {
         "display_name": "Llama3.1-8B-Instruct",
         "hf_model_name": "meta-llama/Llama-3.1-8B-Instruct",
@@ -68,6 +83,8 @@ MODEL_ALIASES = {
     "qwenqwen34b": "qwen3-4b",
     "qwen38b": "qwen3-8b",
     "qwenqwen38b": "qwen3-8b",
+    "qwen3coder30ba3binstruct": "qwen3-coder-30b-a3b-instruct",
+    "qwenqwen3coder30ba3binstruct": "qwen3-coder-30b-a3b-instruct",
     "llama318binstruct": "llama3.1-8b-instruct",
     "llama31instruct8b": "llama3.1-8b-instruct",
     "metallamallama318binstruct": "llama3.1-8b-instruct",
@@ -208,6 +225,9 @@ class VerifiedLatencyEstimator:
     beta_m: float
     alpha_c: float
     beta_c: float
+    memory_expert_latency: float = 0.0
+    num_experts: int = 0
+    experts_per_token: int = 0
 
     def _raw_compute_latency_seconds(self, sequence_tokens: int) -> float:
         s = float(sequence_tokens)
@@ -215,7 +235,13 @@ class VerifiedLatencyEstimator:
 
     def _raw_memory_latency_seconds(self, sequence_tokens: int) -> float:
         s = float(sequence_tokens)
-        return self.memory_quadratic * s * s + self.memory_linear * s + self.memory_constant
+        touched_experts = min(self.num_experts, s * self.experts_per_token)
+        return (
+            self.memory_quadratic * s * s
+            + self.memory_linear * s
+            + self.memory_constant
+            + self.memory_expert_latency * touched_experts
+        )
 
     def raw_branches(self, sequence_tokens: int) -> tuple[float, float]:
         return (
@@ -245,7 +271,7 @@ def _fit_quadratic_from_points(y0: float, y1: float, y2: float) -> tuple[float, 
     return quadratic, linear, constant
 
 
-def calculate_qwen_flops(s, c, L, h, n_q, n_kv, d, h_ffn, V):
+def calculate_qwen_flops(s, c, L, h, n_q, n_kv, d, h_ffn, V, E=None, K=None):
     h_q = n_q * d
     h_kv = n_kv * d
 
@@ -257,10 +283,13 @@ def calculate_qwen_flops(s, c, L, h, n_q, n_kv, d, h_ffn, V):
 
     attn_flops_per_layer = q_proj + kv_proj + qk_matmul + sv_matmul + o_proj
 
-    gate_up_proj = 4 * s * h * h_ffn
-    down_proj = 2 * s * h_ffn * h
+    # Dense: one SwiGLU block. MoE: router + K active experts per token.
+    active_experts = K if E is not None and K is not None else 1
+    router_flops = 2 * s * h * E if E is not None and K is not None else 0
+    gate_up_proj = active_experts * 4 * s * h * h_ffn
+    down_proj = active_experts * 2 * s * h_ffn * h
 
-    ffn_flops_per_layer = gate_up_proj + down_proj
+    ffn_flops_per_layer = router_flops + gate_up_proj + down_proj
 
     total_layer_flops = L * (attn_flops_per_layer + ffn_flops_per_layer)
 
@@ -282,13 +311,20 @@ def calculate_qwen_inference_memory_footprint(
     V,
     bp=2,
     return_breakdown=False,
+    E=None,
+    K=None,
 ):
     h_q = n_q * d
     h_kv = n_kv * d
 
     embed_param = V * h
     attn_param_per_layer = (2 * h * h_q) + (2 * h * h_kv)
-    ffn_param_per_layer = 3 * h * h_ffn
+    if E is not None and K is not None:
+        # MoE: router weights plus every distinct expert the s tokens touch.
+        touched_experts = min(E, s * K)
+        ffn_param_per_layer = (h * E) + (touched_experts * 3 * h * h_ffn)
+    else:
+        ffn_param_per_layer = 3 * h * h_ffn
     output_param = h * V
 
     footprint_param = bp * (embed_param + L * (attn_param_per_layer + ffn_param_per_layer) + output_param)
@@ -303,9 +339,11 @@ def calculate_qwen_inference_memory_footprint(
     o_proj_io = (s * h_q) + (s * h)
     attn_act_per_layer = qkv_proj_io + attn_score_io + attn_value_io + o_proj_io
 
-    gate_up_proj_io = (s * h) + (2 * s * h_ffn)
-    down_proj_io = (2 * s * h_ffn) + (s * h)
-    ffn_act_per_layer = gate_up_proj_io + down_proj_io
+    active_experts = K if E is not None and K is not None else 1
+    router_io = (s * h) + (s * E) if E is not None and K is not None else 0
+    gate_up_proj_io = (s * h) + (2 * s * active_experts * h_ffn)
+    down_proj_io = (2 * s * active_experts * h_ffn) + (s * h)
+    ffn_act_per_layer = router_io + gate_up_proj_io + down_proj_io
 
     output_header_io = (s * h) + (s * V)
 
@@ -724,15 +762,29 @@ def build_verified_latency_estimator(*, context_tokens: int, model_name: str = "
         memory_footprint = _calculate_model_inference_memory_footprint(model_args, sequence_tokens, context_tokens)
         return memory_footprint / memory_bandwidth
 
+    # The expert-weight term min(E, s*K) is not quadratic in s, so fit the
+    # quadratic on the rest and let the estimator add the expert term exactly.
+    num_experts = int(model_args.get("E", 0))
+    experts_per_token = int(model_args.get("K", 0)) if num_experts else 0
+    memory_expert_latency = (
+        2 * model_args["L"] * 3 * model_args["h"] * model_args["h_ffn"] / memory_bandwidth
+        if num_experts
+        else 0.0
+    )
+
+    def _raw_memory_latency_without_experts(sequence_tokens: int) -> float:
+        touched_experts = min(num_experts, sequence_tokens * experts_per_token)
+        return _raw_memory_latency_seconds(sequence_tokens) - memory_expert_latency * touched_experts
+
     compute_quad, compute_linear, compute_constant = _fit_quadratic_from_points(
         _raw_compute_latency_seconds(0),
         _raw_compute_latency_seconds(1),
         _raw_compute_latency_seconds(2),
     )
     memory_quad, memory_linear, memory_constant = _fit_quadratic_from_points(
-        _raw_memory_latency_seconds(0),
-        _raw_memory_latency_seconds(1),
-        _raw_memory_latency_seconds(2),
+        _raw_memory_latency_without_experts(0),
+        _raw_memory_latency_without_experts(1),
+        _raw_memory_latency_without_experts(2),
     )
 
     calibration_params = resolve_calibration_params(gpu_key, model_key)
@@ -755,6 +807,9 @@ def build_verified_latency_estimator(*, context_tokens: int, model_name: str = "
         beta_m=beta_m,
         alpha_c=alpha_c,
         beta_c=beta_c,
+        memory_expert_latency=memory_expert_latency,
+        num_experts=num_experts,
+        experts_per_token=experts_per_token,
     )
 
 
