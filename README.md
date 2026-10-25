@@ -24,19 +24,20 @@ BASTION couples adaptive tree construction with a hardware-calibrated verificati
 
 This repository is intended for experiment reproduction, not as a general serving framework. The current public release supports:
 
-- Transformers backend only
-- batch size 1 experiments
-- Qwen3-4B, Qwen3-8B, and Llama-3.1-8B-Instruct target models
+- Transformers backend, batch size 1 experiments
+- multi-batch validation on SGLang (see [Multi-Batch Validation (SGLang)](#multi-batch-validation-sglang))
+- Qwen3-4B, Qwen3-8B, Llama-3.1-8B-Instruct, and Qwen3-Coder-30B-A3B-Instruct (MoE) target models
 - DFlash draft models released on Hugging Face
+- greedy and lossless stochastic (`--temperature 1.0`) decoding
 - automatic per-(GPU, target model) calibration and profiling cache creation
 
-SGLang, vLLM, and MLX backends are not part of this BASTION release.
+vLLM and MLX backends are not part of this BASTION release.
 
 ## Requirements
 
 - **Python:** 3.10 or newer
 - **GPU:** NVIDIA GPU with CUDA support (bf16). Tested on A100 (80 GB), H100 (80 GB), A6000 (48 GB), and RTX PRO 6000 Blackwell (96 GB).
-- **VRAM:** ~20 GB for Qwen3-4B targets, ~24 GB for Qwen3-8B / Llama-3.1-8B targets in bf16.
+- **VRAM:** ~20 GB for Qwen3-4B targets, ~24 GB for Qwen3-8B / Llama-3.1-8B targets in bf16. Qwen3-Coder-30B-A3B-Instruct has ~61 GB of bf16 weights, so use an 80 GB GPU.
 - **PyTorch / Transformers:** `transformers==4.57.1` and a matching `torch` build (installed via the `[transformers]` extra).
 - **Optional:** FlashAttention (`flash-attn`) for faster AR and DFlash baselines.
 
@@ -69,6 +70,7 @@ uv pip install flash-attn --no-build-isolation
 | `Qwen/Qwen3-4B` | `z-lab/Qwen3-4B-DFlash-b16` | non-thinking only — do not pass `--enable-thinking` |
 | `Qwen/Qwen3-8B` | `z-lab/Qwen3-8B-DFlash-b16` | non-thinking only — do not pass `--enable-thinking` |
 | `meta-llama/Llama-3.1-8B-Instruct` | `z-lab/LLaMA3.1-8B-Instruct-DFlash-UltraChat` | gated — accept the license and run `huggingface-cli login` |
+| `Qwen/Qwen3-Coder-30B-A3B-Instruct` | `z-lab/Qwen3-Coder-30B-A3B-DFlash` | MoE (128 experts, 8 active per token); 80 GB GPU |
 
 ## Quick Start
 
@@ -130,11 +132,25 @@ torchrun --nproc_per_node=8 -m bastion.benchmark \
 
 Behavior across ranks: prompts are sharded round-robin by rank. Rank 0 creates the calibration cache on first run; other ranks wait for it. Per-rank results are gathered to rank 0, which prints the combined summary table.
 
+## Multi-Batch Validation (SGLang)
+
+Multi-batch experiments run on our SGLang fork in the `sglang/` submodule, installed in its own environment. Start a server with one of its launchers, then benchmark it with the DFlash client from this repository:
+
+```bash
+git submodule update --init sglang
+cd sglang && ./run_bastion.sh   # BASTION; or run_ddtree.sh (fixed tree), run_dflash.sh (chain)
+
+# in another shell
+python -m dflash.benchmark --backend sglang --model Qwen/Qwen3-8B \
+  --dataset math500 --num-prompts 128 --concurrency 8
+```
+
 ## Repository Layout
 
 ```
 bastion/    # adaptive tree drafting, cost model, benchmark harness
 dflash/     # vendored DFlash drafter implementation
+sglang/     # SGLang fork for multi-batch validation (git submodule)
 ```
 
 Key files:
@@ -148,6 +164,8 @@ Key files:
 
 - Datasets are downloaded through Hugging Face `datasets` and cached as JSONL files in `cache/`.
 - Calibration is part of the official reproduction flow. BASTION does not use an uncalibrated fallback in this release.
+- With `--temperature` > 0, tree verification samples the target along the drafted tree and reuses the first unmatched sample as the bonus token, so outputs follow the target model's sampling distribution.
+- MoE targets are cost-modeled by the number of distinct experts a verification pass touches, so memory-bound verification cost grows with tree size until every expert is loaded.
 - Throughput numbers can vary with GPU SKU, CUDA version, attention implementation, and driver/runtime state.
 
 ## Citation
@@ -166,7 +184,7 @@ Key files:
 
 ## Acknowledgements
 
-BASTION builds on [DFlash](https://github.com/z-lab/dflash) block-diffusion drafters (z-lab) and compares against EAGLE-3 (via the [AngelSlim](https://github.com/tencent/AngelSlim) implementation). See the paper for full references.
+BASTION builds on [DFlash](https://github.com/z-lab/dflash) block-diffusion drafters (z-lab), runs its multi-batch validation on [SGLang](https://github.com/sgl-project/sglang), and compares against EAGLE-3 (via the [AngelSlim](https://github.com/tencent/AngelSlim) implementation). See the paper for full references.
 
 ## License
 
