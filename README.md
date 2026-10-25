@@ -2,7 +2,7 @@
   <img src="assets/bastion_icon2.png" alt="BASTION icon" width="180"/>
 </p>
 
-# BASTION: Budget-Aware Speculative Decoding with Tree-structured Block Diffusion Drafting
+# BASTION: Budget-Aware Speculative Decoding with Tree-structured Block Diffusion Drafting (NeurIPS 2026)
 
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
