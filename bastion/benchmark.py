@@ -248,6 +248,11 @@ def _get_baseline_attn_impl() -> str:
         return "sdpa"
 
 
+def _set_attn_impl(model, attn_impl: str) -> None:
+    if model.config._attn_implementation != attn_impl:
+        model.set_attn_implementation(attn_impl)
+
+
 def _mean_acceptance_length(rows: list[dict[int, SimpleNamespace]], key: int) -> float | None:
     lengths = list(chain.from_iterable(getattr(row[key], "acceptance_lengths", []) for row in rows))
     if not lengths:
@@ -397,22 +402,18 @@ def _run_transformers(args: argparse.Namespace) -> None:
     baseline_attn_impl = _get_baseline_attn_impl()
     bastion_attn_impl = "sdpa"
 
-    logger.info("Loading AR/DFlash target model: {} (attn_implementation={})", args.model, baseline_attn_impl)
+    logger.info(
+        "Loading target model: {} (AR/DFlash attn={}, BASTION attn={})",
+        args.model,
+        baseline_attn_impl,
+        bastion_attn_impl,
+    )
     target = AutoModelForCausalLM.from_pretrained(
         args.model, attn_implementation=baseline_attn_impl, dtype=torch.bfloat16
     ).to(device).eval()
-
-    if baseline_attn_impl == bastion_attn_impl:
-        bastion_target = target
-    else:
-        logger.info(
-            "Loading BASTION verification target model: {} (attn_implementation={})",
-            args.model,
-            bastion_attn_impl,
-        )
-        bastion_target = AutoModelForCausalLM.from_pretrained(
-            args.model, attn_implementation=bastion_attn_impl, dtype=torch.bfloat16
-        ).to(device).eval()
+    # One target copy serves every method so large (e.g. MoE) targets fit in
+    # memory; only its attention kernel is switched before each method runs.
+    bastion_target = target
 
     logger.info("Loading draft model: {} (attn_implementation={})", args.draft_model, baseline_attn_impl)
     draft_model = DFlashDraftModel.from_pretrained(
@@ -478,6 +479,9 @@ def _run_transformers(args: argparse.Namespace) -> None:
                 cached["attn_impl"] = cached_attn_impl
                 path.write_text(json.dumps(cached), encoding="utf-8")
         return cached_attn_impl == bastion_attn_impl
+
+    # Calibration and profiling time BASTION's verification path.
+    _set_attn_impl(bastion_target, bastion_attn_impl)
 
     # Create/refit calibration cache if missing or produced by an older fitting path.
     if not _calibration_cache_current(calib_cache) and _dist_is_main():
@@ -625,6 +629,7 @@ def _run_transformers(args: argparse.Namespace) -> None:
             input_ids = tokenizer.encode(input_text, return_tensors="pt").to(device)
 
             response = {}
+            _set_attn_impl(target, baseline_attn_impl)
             for bs in [1, block_size]:
                 response[bs] = dflash_generate(
                     draft_model,
@@ -638,6 +643,7 @@ def _run_transformers(args: argparse.Namespace) -> None:
                 )
 
             # Tree-drafting path using bastion_generate
+            _set_attn_impl(bastion_target, bastion_attn_impl)
             response[block_size * 10] = tree_draft.bastion_generate(
                 draft_model,
                 target=bastion_target,
